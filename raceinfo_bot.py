@@ -396,10 +396,8 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
 
         alt_names = [alt["alt_name"] for alt in alternatives.values()][:3]
         if alt_names:
-            lines.append(
-                f"Alternativ könnt ihr auch "
-                f"{join_with_und([f"**{n}**" for n in alt_names])} in Betracht ziehen."
-            )
+            alt_str = join_with_und([f"**{n}**" for n in alt_names])
+            lines.append(f"Alternativ könnt ihr auch {alt_str} in Betracht ziehen.")
     else:
         lines.append(
             "Für diese Strecke liegen noch keine Performancedaten vor."
