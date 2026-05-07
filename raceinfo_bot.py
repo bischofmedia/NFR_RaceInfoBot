@@ -314,7 +314,7 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
     lines = []
     lines.append(f"## 🏁 Rennen auf {track_name}")
     lines.append("")
-    lines.append("Hallo Ihr legendären No Facken Racer,")
+    lines.append("Hallo Ihr legendären No Facksen Racer,")
     lines.append(
         f"die Anmeldung für das Rennen auf **{track_name}** ist geöffnet. "
         f"Wir fahren **{race['laps']} Runden**, "
@@ -437,6 +437,8 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
             "Die Fahrzeugempfehlung ist deshalb mit Vorbehalt zu betrachten."
         )
 
+    lines.append("")
+    lines.append("Push your Limits! 🏎️")
     return "\n".join(lines)
 
 # ── Main logic ────────────────────────────────────────────────────────────────
