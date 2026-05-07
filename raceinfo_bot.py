@@ -248,11 +248,44 @@ def fetch_vehicle_stats(db, track_id):
                     # Dummy-Schlüssel für zusätzliche Alternativen
                     alternatives[f"extra_{alt['alt_id']}"] = alt
 
-        return most_used, top5, alternatives
+        # Neue Autos (< 1 Jahr im Spiel) die noch nicht genannt wurden
+        all_mentioned = used_in_top5 | used_as_alt
+        c.execute("""
+            SELECT v.vehicle_id, v.name AS vehicle_name, v.gt_added
+            FROM vehicles v
+            WHERE v.in_gt7 = 1
+            AND v.gt_added >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)
+            AND v.vehicle_id NOT IN %s
+        """, (tuple(all_mentioned) if all_mentioned else (0,),))
+        new_cars_raw = c.fetchall()
+
+        new_cars = []
+        for car in new_cars_raw:
+            vid = car["vehicle_id"]
+            if not top5:
+                break
+            top5_ids = tuple(r["vehicle_id"] for r in top5)
+            c.execute("""
+                SELECT
+                    avg_diff,
+                    CASE WHEN vehicle_id_a = %s THEN -avg_delta ELSE avg_delta END AS delta
+                FROM v_vehicle_similarity
+                WHERE (vehicle_id_a = %s OR vehicle_id_b = %s)
+                AND (vehicle_id_a IN %s OR vehicle_id_b IN %s)
+                ORDER BY avg_diff ASC
+                LIMIT 1
+            """, (vid, vid, vid, top5_ids, top5_ids))
+            sim = c.fetchone()
+            if sim:
+                car["avg_diff"]  = sim["avg_diff"]
+                car["avg_delta"] = sim["delta"]
+                new_cars.append(car)
+
+        return most_used, top5, alternatives, new_cars
 
 # ── Message builder ───────────────────────────────────────────────────────────
 def build_message(race, track_history, nfr_drivers, nfr_races,
-                  most_used, top5, alternatives):
+                  most_used, top5, alternatives, new_cars):
     is_rain      = race["weather_code"] and race["weather_code"].upper().startswith("R")
     weather_emoji = "🌧️" if is_rain else "☀️"
 
@@ -356,6 +389,31 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
             "Für diese Strecke liegen noch keine Performancedaten vor."
         )
 
+
+    # ── Neue Fahrzeuge ──
+    if new_cars:
+        good = [c for c in new_cars if c.get("avg_delta", 0) >= 0]
+        bad  = [c for c in new_cars if c.get("avg_delta", 0) < 0]
+        no_data = [c for c in new_cars if "avg_delta" not in c]
+
+        parts = []
+        if good:
+            names = ", ".join(f"**{c['vehicle_name']}**" for c in good)
+            parts.append(f"{names} könnte{'n' if len(good) > 1 else ''} auf dieser Strecke gut funktionieren")
+        if bad:
+            names = ", ".join(f"**{c['vehicle_name']}**" for c in bad)
+            parts.append(f"{names} ist{'sind' if len(bad) > 1 else ''} für diese Strecke eher nicht zu empfehlen")
+        if no_data:
+            names = ", ".join(f"**{c['vehicle_name']}**" for c in no_data)
+            parts.append(f"für {names} gibt es noch keine ausreichenden Vergleichsdaten")
+
+        if parts:
+            lines.append("")
+            lines.append(
+                "🆕 **Neuere Fahrzeuge (< 1 Jahr im Spiel):** "
+                + " — ".join(parts) + "."
+            )
+
     if is_rain:
         lines.append("")
         lines.append(
@@ -396,10 +454,10 @@ async def post_race_info():
         track_history            = fetch_track_history(db, track_id)
         nfr_drivers              = fetch_nfr_drivers(db)
         nfr_races                = fetch_nfr_results(db, track_id, nfr_drivers)
-        most_used, top5, alts    = fetch_vehicle_stats(db, track_id)
+        most_used, top5, alts, new_cars = fetch_vehicle_stats(db, track_id)
 
         msg = build_message(race, track_history, nfr_drivers, nfr_races,
-                            most_used, top5, alts)
+                            most_used, top5, alts, new_cars)
 
         # Discord-Limit: 2000 Zeichen pro Nachricht
         while len(msg) > 1900:
