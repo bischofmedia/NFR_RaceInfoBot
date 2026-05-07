@@ -333,6 +333,40 @@ def fetch_vehicle_stats(db, track_id):
             else:
                 never_used.append(car)
 
+        # Neue Autos (<1,5 Jahre) die noch nicht in Top5 oder Alternativen sind
+        # unabhängig davon ob sie auf der Strecke schon gefahren wurden
+        all_mentioned_ids = used_in_top5 | used_as_alt
+        c.execute("""
+            SELECT v.vehicle_id, v.name AS vehicle_name, v.gt_added
+            FROM vehicles v
+            WHERE v.in_gt7 = 1
+            AND v.gt_added >= %s
+            AND v.vehicle_id NOT IN %s
+        """, (cutoff_18m, tuple(all_mentioned_ids) if all_mentioned_ids else (0,)))
+        newer_cars_all = c.fetchall()
+
+        # Ähnlichkeit prüfen für diese Autos
+        newer_cars = []
+        for car in newer_cars_all:
+            if car["vehicle_id"] in {c2["vehicle_id"] for c2 in newer_cars}:
+                continue
+            sim = None
+            if top5:
+                c.execute("""
+                    SELECT
+                        avg_diff,
+                        CASE WHEN vehicle_id_a = %s THEN -avg_delta ELSE avg_delta END AS delta
+                    FROM v_vehicle_similarity
+                    WHERE (vehicle_id_a = %s OR vehicle_id_b = %s)
+                    AND (vehicle_id_a IN %s OR vehicle_id_b IN %s)
+                    ORDER BY avg_diff ASC
+                    LIMIT 1
+                """, (car["vehicle_id"], car["vehicle_id"], car["vehicle_id"],
+                      top5_ids, top5_ids))
+                sim = c.fetchone()
+            car["sim"] = sim
+            newer_cars.append(car)
+
         return most_used, top5, alternatives, never_used, newer_cars
 
 # ── Message builder ───────────────────────────────────────────────────────────
@@ -414,12 +448,14 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
                     f"{name:<13}  {grid_label:>2} {start_pos:>3} {pos_overall:>4}  {vehicle}"
                 )
             lines.append("```")
-            lines.append("*Gr = Grid  |  GP = Position im Grid  |  Ges = Position Gesamt*")
     else:
         lines.append(
             "Für unsere aktiven Fahrer gibt es auf dieser Strecke noch keine Ergebnisse."
         )
 
+    if nfr_races:
+        lines.append("*Gr = Grid  |  GP = Position im Grid  |  Ges = Position Gesamt*")
+    lines.append("")
     # ── Fahrzeugempfehlung ──
     lines.append("**🚗 Fahrzeugempfehlung:**")
 
@@ -437,7 +473,8 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
         # Neue Autos (<1,5 Jahre) anhängen die noch nicht genannt wurden
         all_mentioned_names = (
             {r["vehicle_name"] for r in top5} |
-            {alt["alt_name"] for alt in alternatives.values()}
+            {alt["alt_name"] for alt in alternatives.values()} |
+            set(alt_names)
         )
         for nc in newer_cars:
             if nc["vehicle_name"] not in all_mentioned_names:
