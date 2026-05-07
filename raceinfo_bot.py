@@ -22,6 +22,15 @@ DB_USER         = os.getenv("DB_USER")
 DB_PASS         = os.getenv("DB_PASS")
 DB_NAME         = os.getenv("DB_NAME")
 
+
+def join_with_und(items):
+    """Verbindet eine Liste mit Komma und 'und' vor dem letzten Element."""
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + " und " + items[-1]
+
 intents = discord.Intents.default()
 client  = discord.Client(intents=intents)
 
@@ -59,8 +68,7 @@ def fetch_track_history(db, track_id):
     with db.cursor() as c:
         c.execute("""
             SELECT COUNT(*) AS race_count,
-                   MAX(race_date) AS last_race_date,
-                   MAX(race_id) AS last_race_id
+                   MAX(race_date) AS last_race_date
             FROM races
             WHERE track_id = %s AND race_date >= '2022-03-04'
         """, (track_id,))
@@ -68,7 +76,14 @@ def fetch_track_history(db, track_id):
         if not history or not history["race_count"]:
             return None
 
-        last_race_id = history["last_race_id"]
+        # race_id des Rennens mit dem neuesten Datum holen
+        c.execute("""
+            SELECT race_id FROM races
+            WHERE track_id = %s AND race_date >= '2022-03-04'
+            ORDER BY race_date DESC, race_id DESC
+            LIMIT 1
+        """, (track_id,))
+        last_race_id = c.fetchone()["race_id"]
 
         c.execute("""
             SELECT d.psn_name, v.name AS vehicle_name
@@ -376,14 +391,14 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
         lines.append(f"Am meisten genutzt wurden auf dieser Strecke: {used_str}.")
 
     if top5:
-        top5_str = ", ".join([f"**{r['vehicle_name']}**" for r in top5])
+        top5_str = join_with_und([f"**{r['vehicle_name']}**" for r in top5])
         lines.append(f"Die besten Ergebnisse erzielten: {top5_str}.")
 
         alt_names = [alt["alt_name"] for alt in alternatives.values()][:3]
         if alt_names:
             lines.append(
                 f"Alternativ könnt ihr auch "
-                f"{', '.join(f'**{n}**' for n in alt_names)} in Betracht ziehen."
+                f"{join_with_und([f"**{n}**" for n in alt_names])} in Betracht ziehen."
             )
     else:
         lines.append(
@@ -399,13 +414,13 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
 
         parts = []
         if good:
-            names = ", ".join(f"**{c['vehicle_name']}**" for c in good)
+            names = join_with_und([f"**{c['vehicle_name']}**" for c in good])
             parts.append(f"{names} könnte{'n' if len(good) > 1 else ''} auf dieser Strecke gut funktionieren")
         if bad:
-            names = ", ".join(f"**{c['vehicle_name']}**" for c in bad)
+            names = join_with_und([f"**{c['vehicle_name']}**" for c in bad])
             parts.append(f"{names} ist{'sind' if len(bad) > 1 else ''} für diese Strecke eher nicht zu empfehlen")
         if no_data:
-            names = ", ".join(f"**{c['vehicle_name']}**" for c in no_data)
+            names = join_with_und([f"**{c['vehicle_name']}**" for c in no_data])
             parts.append(f"für {names} gibt es noch keine ausreichenden Vergleichsdaten")
 
         if parts:
