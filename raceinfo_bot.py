@@ -258,6 +258,7 @@ def fetch_vehicle_stats(db, track_id):
             AND v.vehicle_id NOT IN %s
         """, (tuple(all_mentioned) if all_mentioned else (0,),))
         new_cars_raw = c.fetchall()
+        print(f"Neue Autos gefunden: {len(new_cars_raw)}: {[c['vehicle_name'] for c in new_cars_raw]}")
 
         new_cars = []
         for car in new_cars_raw:
@@ -345,7 +346,8 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
         lines.append("**Unsere letzten Ergebnisse:**")
         for race_block in nfr_races:
             date_str = race_block["race_date"].strftime("%d.%m.%Y")
-            lines.append(f"\n📅 **{race_block['season_name']} — {date_str}**")
+            lines.append("")
+            lines.append(f"📅 **{race_block['season_name']} — {date_str}**")
             lines.append("```")
             lines.append(f"{'Fahrer':<22} {'Grid':<12} {'Grid-P':>6} {'Ges.':>5}  Fahrzeug")
             lines.append("─" * 68)
@@ -363,7 +365,6 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
         lines.append(
             "Für unsere aktiven Fahrer gibt es auf dieser Strecke noch keine Ergebnisse."
         )
-    lines.append("")
 
     # ── Fahrzeugempfehlung ──
     lines.append("**🚗 Fahrzeugempfehlung:**")
