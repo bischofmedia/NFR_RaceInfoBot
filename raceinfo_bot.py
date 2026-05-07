@@ -12,6 +12,7 @@ load_dotenv()
 # ── Config ────────────────────────────────────────────────────────────────────
 DISCORD_TOKEN   = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID      = int(os.getenv("CHANNEL_ID"))
+CHANNEL_TEST_ID = int(os.getenv("CHANNEL_TEST_ID", "0"))
 TEST_MODE       = os.getenv("TEST_MODE", "false").lower() == "true"
 NFR_TEAM_IDS    = [8, 9, 10]  # NFR inkl. Sub-Teams
 TZ              = pytz.timezone("Europe/Berlin")
@@ -266,45 +267,77 @@ def fetch_vehicle_stats(db, track_id):
                     # Dummy-Schlüssel für zusätzliche Alternativen
                     alternatives[f"extra_{alt['alt_id']}"] = alt
 
-        # Neue Autos (< 1 Jahr im Spiel) die noch nicht genannt wurden
         all_mentioned = used_in_top5 | used_as_alt
+
+        # Autos die auf dieser Strecke noch nie genutzt wurden aber in GT7 sind
+        # Genutzte Autos auf dieser Strecke ermitteln
+        c.execute("""
+            SELECT DISTINCT rr.vehicle_id
+            FROM race_results rr
+            JOIN races r ON rr.race_id = r.race_id
+            WHERE r.track_id = %s AND r.race_date >= '2022-03-04'
+        """, (track_id,))
+        used_on_track = {row["vehicle_id"] for row in c.fetchall()}
+
+        # Alle GT7-Autos die noch nie auf dieser Strecke gefahren wurden
         c.execute("""
             SELECT v.vehicle_id, v.name AS vehicle_name, v.gt_added
             FROM vehicles v
             WHERE v.in_gt7 = 1
-            AND v.gt_added >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)
             AND v.vehicle_id NOT IN %s
-        """, (tuple(all_mentioned) if all_mentioned else (0,),))
-        new_cars_raw = c.fetchall()
-        print(f"Neue Autos gefunden: {len(new_cars_raw)}: {[c['vehicle_name'] for c in new_cars_raw]}")
+        """, (tuple(used_on_track) if used_on_track else (0,),))
+        never_used_raw = c.fetchall()
 
-        new_cars = []
-        for car in new_cars_raw:
-            vid = car["vehicle_id"]
-            if not top5:
-                break
-            top5_ids = tuple(r["vehicle_id"] for r in top5)
-            c.execute("""
-                SELECT
-                    avg_diff,
-                    CASE WHEN vehicle_id_a = %s THEN -avg_delta ELSE avg_delta END AS delta
-                FROM v_vehicle_similarity
-                WHERE (vehicle_id_a = %s OR vehicle_id_b = %s)
-                AND (vehicle_id_a IN %s OR vehicle_id_b IN %s)
-                ORDER BY avg_diff ASC
-                LIMIT 1
-            """, (vid, vid, vid, top5_ids, top5_ids))
-            sim = c.fetchone()
-            if sim:
-                car["avg_diff"]  = sim["avg_diff"]
-                car["avg_delta"] = sim["delta"]
-                new_cars.append(car)
+        from datetime import date
+        today = date.today()
+        cutoff_new = date(today.year - 1, today.month, today.day)
+        cutoff_newer = date(today.year - 1, today.month, today.day)
+        # 1,5 Jahre zurück
+        month = today.month - 6
+        year  = today.year
+        if month <= 0:
+            month += 12
+            year  -= 1
+        cutoff_18m = date(year, month, today.day)
 
-        return most_used, top5, alternatives, new_cars
+        never_used  = []  # noch nie genutzt, nicht neu
+        newer_cars  = []  # < 1,5 Jahre im Spiel, noch nie genutzt
+
+        top5_ids = tuple(r["vehicle_id"] for r in top5) if top5 else (0,)
+
+        for car in never_used_raw:
+            if car["vehicle_id"] in all_mentioned:
+                continue
+            gt_added = car["gt_added"]
+
+            # Ähnlichkeit zu Top5 prüfen
+            sim = None
+            if top5:
+                c.execute("""
+                    SELECT
+                        avg_diff,
+                        CASE WHEN vehicle_id_a = %s THEN -avg_delta ELSE avg_delta END AS delta
+                    FROM v_vehicle_similarity
+                    WHERE (vehicle_id_a = %s OR vehicle_id_b = %s)
+                    AND (vehicle_id_a IN %s OR vehicle_id_b IN %s)
+                    ORDER BY avg_diff ASC
+                    LIMIT 1
+                """, (car["vehicle_id"], car["vehicle_id"], car["vehicle_id"],
+                      top5_ids, top5_ids))
+                sim = c.fetchone()
+
+            car["sim"] = sim
+
+            if gt_added and gt_added >= cutoff_18m:
+                newer_cars.append(car)
+            else:
+                never_used.append(car)
+
+        return most_used, top5, alternatives, never_used, newer_cars
 
 # ── Message builder ───────────────────────────────────────────────────────────
 def build_message(race, track_history, nfr_drivers, nfr_races,
-                  most_used, top5, alternatives, new_cars):
+                  most_used, top5, alternatives, never_used, newer_cars):
     is_rain      = race["weather_code"] and race["weather_code"].upper().startswith("R")
     weather_emoji = "🌧️" if is_rain else "☀️"
 
@@ -368,16 +401,17 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
             lines.append("")
             lines.append(f"📅 **{race_block['season_name']} — {date_str}**")
             lines.append("```")
-            lines.append(f"{'Fahrer':<18} {'Grid':<8} {'GP':>3} {'Ges':>4}  Fahrzeug")
-            lines.append("─" * 58)
+            lines.append(f"{'Fahrer':<13}  {'Gr':>2} {'GP':>3} {'Ges':>4}  Fahrzeug")
+            lines.append("─" * 48)
             for r in sorted(race_block["results"],
                             key=lambda x: x["finish_pos_overall"] or 99):
                 pos_overall = str(r["finish_pos_overall"]) if r["finish_pos_overall"] else "–"
                 start_pos   = str(r["finish_pos_grid"]) if r["finish_pos_grid"] else "–"
                 vehicle     = r["vehicle_name"] or "–"
-                grid        = r["grid_label"]   or "–"
+                grid_label  = (r["grid_label"] or "–").replace("Grid ", "")
+                name        = r['psn_name'][:13]
                 lines.append(
-                    f"{r['psn_name']:<18} {grid:<8} {start_pos:>3} {pos_overall:>4}  {vehicle}"
+                    f"{name:<13}  {grid_label:>2} {start_pos:>3} {pos_overall:>4}  {vehicle}"
                 )
             lines.append("```")
     else:
@@ -408,29 +442,44 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
         )
 
 
-    # ── Neue Fahrzeuge ──
-    if new_cars:
-        good = [c for c in new_cars if c.get("avg_delta", 0) >= 0]
-        bad  = [c for c in new_cars if c.get("avg_delta", 0) < 0]
-        no_data = [c for c in new_cars if "avg_delta" not in c]
-
+    # ── Nie genutzte Autos ──
+    if never_used:
+        good    = [c for c in never_used if c["sim"] and c["sim"]["delta"] >= 0]
+        bad     = [c for c in never_used if c["sim"] and c["sim"]["delta"] < 0]
+        no_data = [c for c in never_used if not c["sim"]]
         parts = []
         if good:
-            names = join_with_und([f"**{c['vehicle_name']}**" for c in good])
-            parts.append(f"{names} könnte{'n' if len(good) > 1 else ''} auf dieser Strecke gut funktionieren")
+            parts.append(join_with_und([f"**{c['vehicle_name']}**" for c in good])
+                         + (" könnten" if len(good) > 1 else " könnte") + " funktionieren")
         if bad:
-            names = join_with_und([f"**{c['vehicle_name']}**" for c in bad])
-            parts.append(f"{names} ist{'sind' if len(bad) > 1 else ''} für diese Strecke eher nicht zu empfehlen")
+            parts.append(join_with_und([f"**{c['vehicle_name']}**" for c in bad])
+                         + (" sind" if len(bad) > 1 else " ist") + " eher nicht zu empfehlen")
         if no_data:
-            names = join_with_und([f"**{c['vehicle_name']}**" for c in no_data])
-            parts.append(f"für {names} gibt es noch keine ausreichenden Vergleichsdaten")
-
+            parts.append("für " + join_with_und([f"**{c['vehicle_name']}**" for c in no_data])
+                         + " gibt es keine Vergleichsdaten")
         if parts:
             lines.append("")
-            lines.append(
-                "🆕 **Neuere Fahrzeuge (< 1 Jahr im Spiel):** "
-                + " — ".join(parts) + "."
-            )
+            lines.append("🔍 **Noch nie auf dieser Strecke genutzt:** " + " — ".join(parts) + ".")
+
+    # ── Neuere Fahrzeuge (<1,5 Jahre) ──
+    if newer_cars:
+        good    = [c for c in newer_cars if c["sim"] and c["sim"]["delta"] >= 0]
+        bad     = [c for c in newer_cars if c["sim"] and c["sim"]["delta"] < 0]
+        no_data = [c for c in newer_cars if not c["sim"]]
+        parts = []
+        if good:
+            parts.append(join_with_und([f"**{c['vehicle_name']}**" for c in good])
+                         + (" müssten" if len(good) > 1 else " müsste") + " funktionieren")
+        if bad:
+            parts.append(join_with_und([f"**{c['vehicle_name']}**" for c in bad])
+                         + (" sind" if len(bad) > 1 else " ist") + " eher nicht zu empfehlen")
+        if no_data:
+            parts.append("für " + join_with_und([f"**{c['vehicle_name']}**" for c in no_data])
+                         + " gibt es noch keine Vergleichsdaten")
+        if parts:
+            lines.append("")
+            lines.append("🆕 **Neuere Fahrzeuge (<1,5 Jahre im Spiel):** " + " — ".join(parts) + ".")
+
 
     if is_rain:
         lines.append("")
@@ -445,7 +494,8 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
 
 # ── Main logic ────────────────────────────────────────────────────────────────
 async def post_race_info():
-    channel = client.get_channel(CHANNEL_ID)
+    channel_id = CHANNEL_TEST_ID if TEST_MODE and CHANNEL_TEST_ID else CHANNEL_ID
+    channel = client.get_channel(channel_id)
     if not channel:
         print(f"Channel {CHANNEL_ID} nicht gefunden.")
         return
@@ -474,10 +524,10 @@ async def post_race_info():
         track_history            = fetch_track_history(db, track_id)
         nfr_drivers              = fetch_nfr_drivers(db)
         nfr_races                = fetch_nfr_results(db, track_id, nfr_drivers)
-        most_used, top5, alts, new_cars = fetch_vehicle_stats(db, track_id)
+        most_used, top5, alts, never_used, newer_cars = fetch_vehicle_stats(db, track_id)
 
         msg = build_message(race, track_history, nfr_drivers, nfr_races,
-                            most_used, top5, alts, new_cars)
+                            most_used, top5, alts, never_used, newer_cars)
 
         # Discord-Limit: 2000 Zeichen pro Nachricht
         while len(msg) > 1900:
