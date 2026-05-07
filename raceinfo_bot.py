@@ -12,7 +12,7 @@ load_dotenv()
 # ── Config ────────────────────────────────────────────────────────────────────
 DISCORD_TOKEN   = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID      = int(os.getenv("CHANNEL_ID"))
-CHANNEL_TEST_ID = int(os.getenv("CHANNEL_TEST_ID", "0"))
+CHANNEL_TEST_ID = int(os.getenv("CHANNEL_TEST_ID", "0") or "0")
 TEST_MODE       = os.getenv("TEST_MODE", "false").lower() == "true"
 NFR_TEAM_IDS    = [8, 9, 10]  # NFR inkl. Sub-Teams
 TZ              = pytz.timezone("Europe/Berlin")
@@ -444,28 +444,16 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
 
     # ── Nie genutzte Autos ──
     if never_used:
-        good    = [c for c in never_used if c["sim"] and c["sim"]["delta"] >= 0]
-        bad     = [c for c in never_used if c["sim"] and c["sim"]["delta"] < 0]
-        no_data = [c for c in never_used if not c["sim"]]
-        parts = []
+        good = [c for c in never_used if c["sim"] and c["sim"]["delta"] >= 0]
         if good:
-            parts.append(join_with_und([f"**{c['vehicle_name']}**" for c in good])
-                         + (" könnten" if len(good) > 1 else " könnte") + " funktionieren")
-        if bad:
-            parts.append(join_with_und([f"**{c['vehicle_name']}**" for c in bad])
-                         + (" sind" if len(bad) > 1 else " ist") + " eher nicht zu empfehlen")
-        if no_data:
-            parts.append("für " + join_with_und([f"**{c['vehicle_name']}**" for c in no_data])
-                         + " gibt es keine Vergleichsdaten")
-        if parts:
             lines.append("")
-            lines.append("🔍 **Noch nie auf dieser Strecke genutzt:** " + " — ".join(parts) + ".")
+            lines.append("🔍 **Noch nie auf dieser Strecke genutzt, könnte aber funktionieren:** "
+                         + join_with_und([f"**{c['vehicle_name']}**" for c in good]) + ".")
 
     # ── Neuere Fahrzeuge (<1,5 Jahre) ──
     if newer_cars:
         good    = [c for c in newer_cars if c["sim"] and c["sim"]["delta"] >= 0]
         bad     = [c for c in newer_cars if c["sim"] and c["sim"]["delta"] < 0]
-        no_data = [c for c in newer_cars if not c["sim"]]
         parts = []
         if good:
             parts.append(join_with_und([f"**{c['vehicle_name']}**" for c in good])
@@ -473,9 +461,6 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
         if bad:
             parts.append(join_with_und([f"**{c['vehicle_name']}**" for c in bad])
                          + (" sind" if len(bad) > 1 else " ist") + " eher nicht zu empfehlen")
-        if no_data:
-            parts.append("für " + join_with_und([f"**{c['vehicle_name']}**" for c in no_data])
-                         + " gibt es noch keine Vergleichsdaten")
         if parts:
             lines.append("")
             lines.append("🆕 **Neuere Fahrzeuge (<1,5 Jahre im Spiel):** " + " — ".join(parts) + ".")
@@ -494,7 +479,13 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
 
 # ── Main logic ────────────────────────────────────────────────────────────────
 async def post_race_info():
-    channel_id = CHANNEL_TEST_ID if TEST_MODE and CHANNEL_TEST_ID else CHANNEL_ID
+    if TEST_MODE:
+        if not CHANNEL_TEST_ID:
+            print("TEST_MODE aktiv aber CHANNEL_TEST_ID nicht gesetzt — abbruch!")
+            return
+        channel_id = CHANNEL_TEST_ID
+    else:
+        channel_id = CHANNEL_ID
     channel = client.get_channel(channel_id)
     if not channel:
         print(f"Channel {CHANNEL_ID} nicht gefunden.")
