@@ -96,9 +96,12 @@ def fetch_track_history(db, track_id):
         winner = c.fetchone()
 
         c.execute("""
-            SELECT d.psn_name, r.fastest_lap_time
+            SELECT d.psn_name, r.fastest_lap_time, v.name AS vehicle_name
             FROM races r
             JOIN drivers d ON r.fastest_lap_driver_id = d.driver_id
+            LEFT JOIN race_results rr ON rr.race_id = r.race_id
+                AND rr.driver_id = r.fastest_lap_driver_id
+            LEFT JOIN vehicles v ON rr.vehicle_id = v.vehicle_id
             WHERE r.race_id = %s AND r.fastest_lap_time IS NOT NULL
             LIMIT 1
         """, (last_race_id,))
@@ -162,7 +165,7 @@ def fetch_nfr_results(db, track_id, nfr_drivers):
             ph = ",".join(["%s"] * len(remaining))
             c.execute(f"""
                 SELECT rr.driver_id, d.psn_name,
-                       g.grid_label, rr.start_pos_grid,
+                       g.grid_label, rr.finish_pos_grid,
                        rr.finish_pos_overall, v.name AS vehicle_name,
                        r.race_date, s.name AS season_name, r.race_id
                 FROM race_results rr
@@ -340,9 +343,10 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
                     f"er fuhr dabei auch die schnellste Runde ({fastest['fastest_lap_time']})."
                 )
             else:
+                fastest_vehicle = f" im {fastest['vehicle_name']}" if fastest.get('vehicle_name') else ""
                 lines.append(
                     f"Gewonnen hat **{winner['psn_name']}** im {winner['vehicle_name']}. "
-                    f"Die schnellste Runde fuhr **{fastest['psn_name']}** "
+                    f"Die schnellste Runde fuhr **{fastest['psn_name']}**{fastest_vehicle} "
                     f"({fastest['fastest_lap_time']})."
                 )
         elif winner:
@@ -364,16 +368,16 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
             lines.append("")
             lines.append(f"📅 **{race_block['season_name']} — {date_str}**")
             lines.append("```")
-            lines.append(f"{'Fahrer':<22} {'Grid':<12} {'Grid-P':>6} {'Ges.':>5}  Fahrzeug")
-            lines.append("─" * 68)
+            lines.append(f"{'Fahrer':<18} {'Grid':<8} {'GP':>3} {'Ges':>4}  Fahrzeug")
+            lines.append("─" * 58)
             for r in sorted(race_block["results"],
                             key=lambda x: x["finish_pos_overall"] or 99):
                 pos_overall = str(r["finish_pos_overall"]) if r["finish_pos_overall"] else "–"
-                start_pos   = str(r["start_pos_grid"])     if r["start_pos_grid"]     else "–"
+                start_pos   = str(r["finish_pos_grid"]) if r["finish_pos_grid"] else "–"
                 vehicle     = r["vehicle_name"] or "–"
                 grid        = r["grid_label"]   or "–"
                 lines.append(
-                    f"{r['psn_name']:<22} {grid:<12} {start_pos:>6} {pos_overall:>5}  {vehicle}"
+                    f"{r['psn_name']:<18} {grid:<8} {start_pos:>3} {pos_overall:>4}  {vehicle}"
                 )
             lines.append("```")
     else:
