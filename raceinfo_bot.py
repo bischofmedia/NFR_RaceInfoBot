@@ -414,6 +414,7 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
                     f"{name:<13}  {grid_label:>2} {start_pos:>3} {pos_overall:>4}  {vehicle}"
                 )
             lines.append("```")
+            lines.append("*Gr = Grid  |  GP = Position im Grid  |  Ges = Position Gesamt*")
     else:
         lines.append(
             "Für unsere aktiven Fahrer gibt es auf dieser Strecke noch keine Ergebnisse."
@@ -433,6 +434,15 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
         lines.append(f"Die besten Ergebnisse erzielten: {top5_str}.")
 
         alt_names = [alt["alt_name"] for alt in alternatives.values()][:3]
+        # Neue Autos (<1,5 Jahre) anhängen die noch nicht genannt wurden
+        all_mentioned_names = (
+            {r["vehicle_name"] for r in top5} |
+            {alt["alt_name"] for alt in alternatives.values()}
+        )
+        for nc in newer_cars:
+            if nc["vehicle_name"] not in all_mentioned_names:
+                alt_names.append(nc["vehicle_name"])
+                all_mentioned_names.add(nc["vehicle_name"])
         if alt_names:
             alt_str = join_with_und([f"**{n}**" for n in alt_names])
             lines.append(f"Alternativ könnt ihr auch {alt_str} in Betracht ziehen.")
@@ -450,20 +460,7 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
             lines.append("🔍 **Noch nie auf dieser Strecke genutzt, könnte aber funktionieren:** "
                          + join_with_und([f"**{c['vehicle_name']}**" for c in good]) + ".")
 
-    # ── Neuere Fahrzeuge (<1,5 Jahre) ──
-    if newer_cars:
-        good    = [c for c in newer_cars if c["sim"] and c["sim"]["delta"] >= 0]
-        bad     = [c for c in newer_cars if c["sim"] and c["sim"]["delta"] < 0]
-        parts = []
-        if good:
-            parts.append(join_with_und([f"**{c['vehicle_name']}**" for c in good])
-                         + (" müssten" if len(good) > 1 else " müsste") + " funktionieren")
-        if bad:
-            parts.append(join_with_und([f"**{c['vehicle_name']}**" for c in bad])
-                         + (" sind" if len(bad) > 1 else " ist") + " eher nicht zu empfehlen")
-        if parts:
-            lines.append("")
-            lines.append("🆕 **Neuere Fahrzeuge (<1,5 Jahre im Spiel):** " + " — ".join(parts) + ".")
+
 
 
     if is_rain:
