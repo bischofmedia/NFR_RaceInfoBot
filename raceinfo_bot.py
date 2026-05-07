@@ -378,7 +378,7 @@ def build_message(race, track_history, nfr_drivers, nfr_races,
         top5_str = ", ".join([f"**{r['vehicle_name']}**" for r in top5])
         lines.append(f"Die besten Ergebnisse erzielten: {top5_str}.")
 
-        alt_names = [alt["alt_name"] for alt in alternatives.values()]
+        alt_names = [alt["alt_name"] for alt in alternatives.values()][:3]
         if alt_names:
             lines.append(
                 f"Alternativ könnt ihr auch "
