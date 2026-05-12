@@ -1,5 +1,6 @@
 import discord
 from discord.ext import tasks
+from discord import app_commands
 import pymysql
 import os
 import random
@@ -34,6 +35,8 @@ def join_with_und(items):
 
 intents = discord.Intents.default()
 client  = discord.Client(intents=intents)
+
+tree = app_commands.CommandTree(client)
 
 # ── DB helper ─────────────────────────────────────────────────────────────────
 def get_db():
@@ -575,8 +578,16 @@ async def scheduler():
 async def on_ready():
     print(f"NFR_RaceInfoBot eingeloggt als {client.user}")
     scheduler.start()
+    await tree.sync()
     if TEST_MODE:
         print("TEST_MODE aktiv — poste sofort.")
         await post_race_info()
+
+@tree.command(name="raceinfo", description="Renninformationen für das nächste Rennen posten.")
+@app_commands.default_permissions(administrator=True)
+async def slash_raceinfo(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    await post_race_info()
+    await interaction.followup.send("✅ Renninformationen gepostet.", ephemeral=True)
 
 client.run(DISCORD_TOKEN)
